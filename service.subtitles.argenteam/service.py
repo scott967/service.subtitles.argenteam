@@ -1,19 +1,29 @@
-# -*- coding: utf-8 -*-
+# See GPLv3 license.txt for full license
+"""Searches for subtitles at argenteam.net based on movie or tv show name
+with optional year.
 
+Usage: Enable via Kodi player subtitle options.  When playing media, use
+subtitles dialog in full screen video to start search and select subtitle
+from results.
+"""
+
+import json
 import os
+import re
+import shutil
 import sys
-import xbmc
+import unicodedata
 import urllib
-import urllib2
-import xbmcvfs
+import urllib.parse
+import urllib.request as urllib2
+
+import xbmc
 import xbmcaddon
 import xbmcgui
 import xbmcplugin
-import shutil
-import unicodedata
-import re
-import string
-import json
+import xbmcvfs
+
+from resources.lib.argenteamutilities import geturl, log
 
 __addon__ = xbmcaddon.Addon()
 __author__ = __addon__.getAddonInfo('author')
@@ -22,77 +32,70 @@ __scriptname__ = __addon__.getAddonInfo('name')
 __version__ = __addon__.getAddonInfo('version')
 __language__ = __addon__.getLocalizedString
 
-__cwd__ = xbmc.translatePath(
-    __addon__.getAddonInfo('path')
-).decode("utf-8")
-__profile__ = xbmc.translatePath(
-    __addon__.getAddonInfo('profile')
-).decode("utf-8")
-__resource__ = xbmc.translatePath(
-    os.path.join(__cwd__, 'resources', 'lib')
-).decode("utf-8")
-__temp__ = xbmc.translatePath(
-    os.path.join(__profile__, 'temp')
-).decode("utf-8")
+__cwd__ = xbmcvfs.translatePath(
+    __addon__.getAddonInfo('path'))
+__profile__ = xbmcvfs.translatePath(
+    __addon__.getAddonInfo('profile'))
+__resource__ = xbmcvfs.translatePath(
+    os.path.join(__cwd__, 'resources', 'lib'))
+__temp__ = xbmcvfs.translatePath(
+    os.path.join(__profile__, 'temp'))
 __temp__ = __temp__ + os.path.sep
 
 sys.path.append(__resource__)
-
-from ArgenteamUtilities import log, geturl
-
-api_search_url = "http://argenteam.net/api/v1/search"
-api_tvshow_url = "http://argenteam.net/api/v1/tvshow"
+API_SEARCH_URL = "http://argenteam.net/api/v1/search"
+API_TVSHOW_API = "http://argenteam.net/api/v1/tvshow"
 api_episode_url = "http://argenteam.net/api/v1/episode"
-api_movie_url = "http://argenteam.net/api/v1/movie"
+API_MOVIE_API = "http://argenteam.net/api/v1/movie"
 main_url = "http://www.argenteam.net/"
+EXTS = [".srt", ".sub", ".txt", ".smi", ".ssa", ".ass"]
 
 
-def append_subtitle(items):
+def append_subtitle(items:list):
+    """Creates Kodi listitems from sub urls
+
+    Args:
+        items (list): list of subtitle dicts
+    """
 
     items.sort(key=lambda x: x['rating'], reverse=True)
     index = 0
     for item in items:
         index += 1
-        listitem = xbmcgui.ListItem(
+        sublistitem = xbmcgui.ListItem(
             label=item['lang'],
-            label2=item['filename'],
-            iconImage=item['rating'],
-            thumbnailImage=item['image']
-        )
+            label2=item['filename'])
 
         #listitem.setProperty("sync",  'true' if item["sync"] else 'false')
-        listitem.setProperty(
+        sublistitem.setArt({'thumb': item['image'], 'icon': item['rating']})
+        sublistitem.setProperty(
             "hearing_imp",
-            'true' if item["hearing_imp"] else 'false'
-        )
+            'true' if item["hearing_imp"] else 'false')
 
         ## below arguments are optional, it can be used to pass any info needed
         ## in download function
         ## anything after "action=download&" will be sent to addon
         ## once user clicks listed subtitle to downlaod
-        url = ("plugin://%s/?action=download&actionsortorder=%s&link=%s"
-               "&filename=%s&id=%s") % (
-            __scriptid__,
-            str(index).zfill(2),
-            item['link'],
-            item['filename'],
-            item['id']
-        )
+        url = (f"plugin://{__scriptid__}/?action=download"
+               f"&actionsortorder={str(index).zfill(2)}"
+               f"&link={item['link']}"
+               f"&filename={item['filename']}"
+               f"&id={item['id']}")
+        log('service.append_subtitle', f"listitem url: {url}")
 
         ## add it to list, this can be done as many times as needed
         ## for all subtitles found
         xbmcplugin.addDirectoryItem(
             handle=int(sys.argv[1]),
             url=url,
-            listitem=listitem,
+            listitem=sublistitem,
             isFolder=False
         )
 
 
-def search_movie(movie_id):
-    url = api_movie_url + "?id=" + str(movie_id)
+def search_movie(movie_id:int):
+    url = API_MOVIE_API + "?id=" + str(movie_id)
     content, response_url = geturl(url)
-
     return search_common(content)
 
 
@@ -102,7 +105,7 @@ def search_tvshow(result):
     subs = []
 
     if result['type'] == "tvshow":
-        url = api_tvshow_url + "?id=" + str(result['id'])
+        url = API_TVSHOW_API + "?id=" + str(result['id'])
         content, response_url = geturl(url)
         content = content.replace("null", '""')
         result_json = json.loads(content)
@@ -124,7 +127,7 @@ def search_episode(episode_id):
     return search_common(content)
 
 
-def search_common(content):
+def search_common(content) -> list:
     if content is not None:
         log(__name__, "Resultados encontrados...")
         #object_subtitles = find_subtitles(content)
@@ -136,7 +139,7 @@ def search_common(content):
                 for subtitle in release['subtitles']:
                     item = {}
                     item['lang'] = "Spanish"
-                    item['filename'] = urllib.unquote_plus(
+                    item['filename'] = urllib.parse.unquote_plus(
                         subtitle['uri'].split("/")[-1]
                     )
                     item['rating'] = str(subtitle['count'])
@@ -172,9 +175,9 @@ def search_filename(filename, languages):
             flags=re.IGNORECASE
         )
         if match is not None:
-            tvshow = string.strip(title[:match.start('season')-1])
-            season = string.lstrip(match.group('season'), '0')
-            episode = string.lstrip(match.group('episode'), '0')
+            tvshow = str.strip(title[:match.start('season')-1])
+            season = str.lstrip(match.group('season'), '0')
+            episode = str.lstrip(match.group('episode'), '0')
             search_string = "%s S%#02dE%#02d" % (
                 tvshow,
                 int(season),
@@ -185,110 +188,147 @@ def search_filename(filename, languages):
             search_argenteam_api(filename)
 
 
-def search_argenteam_api(search_string):
-    url = api_search_url + "?q=" + urllib.quote_plus(search_string)
+def search_argenteam_api(search_string:str):
+    """query argenteam for subs urls and create listitems for subs
+
+    Args:
+        search_string (str): argenteam query string
+    
+    """
+    url = f"{API_SEARCH_URL}?q={urllib.parse.quote_plus(search_string)}"
     content, response_url = geturl(url)
-    response = json.loads(content)
-    subs = []
+    response:dict = json.loads(content)
+    arg_subs = []
 
     if response['total'] > 0:
         for result in response['results']:
             if result['type'] == "tvshow" or result['type'] == "episode":
-                subs.extend(search_tvshow(result))
+                arg_subs.extend(search_tvshow(result))
             elif result['type'] == "movie":
-                subs.extend(search_movie(result['id']))
+                arg_subs.extend(search_movie(result['id']))
 
-    append_subtitle(subs)
+    append_subtitle(arg_subs)
 
 
-def search(item):
-    filename = os.path.splitext(os.path.basename(item['file_original_path']))[0]
-    log(__name__, "Search_argenteam='%s', filename='%s', addon_version=%s" % (
-        item,
-        filename,
-        __version__)
+def search(sitem:dict):
+    """constructs and runs argenteam query to create Kodi listitems of subs
+
+    Args:
+        sitem (dict): the tv show or movie to search for
+    """
+    filename = os.path.splitext(os.path.basename(sitem['file_original_path']))[0]
+    log(__name__, f"Search_argenteam='{sitem}', "
+        f"filename='{filename}', "
+        f"addon_version={__version__}"
     )
-
-    if item['mansearch']:
-        search_string = urllib.unquote(item['mansearchstr'])
+    if sitem['mansearch']:
+        search_string = urllib.parse.unquote(sitem['mansearchstr'])
         search_argenteam_api(search_string)
-    elif item['tvshow']:
+    elif sitem['tvshow']:
         search_string = "%s S%#02dE%#02d" % (
-            item['tvshow'].replace("(US)", ""),
-            int(item['season']),
-            int(item['episode'])
+            sitem['tvshow'].replace("(US)", ""),
+            int(sitem['season']),
+            int(sitem['episode'])
         )
         search_argenteam_api(search_string)
-    elif item['title'] and item['year']:
-        search_string = item['title'] + " " + item['year']
+    elif sitem['title'] and sitem['year']:
+        search_string = sitem['title'] + " " + sitem['year']
         search_argenteam_api(search_string)
     else:
-        search_filename(filename, item['3let_language'])
+        search_filename(filename, sitem['3let_language'])
 
 
-def download(id, url, filename, search_string=""):
+def download(id:str, url:str, filename:str, search_string="") -> list:
+    """download subs and write to files
+
+    Args:
+        id (str): argenteam subid
+        url (str): argenteam sub url
+        filename (str): local media filename
+        search_string (str, optional): _description_. Defaults to "".
+
+    Returns:
+        list: sub files
+    """
     subtitle_list = []
-    exts = [".srt", ".sub", ".txt", ".smi", ".ssa", ".ass"]
 
     ## Cleanup temp dir, we recomend you download/unzip your subs
     ## in temp folder and pass that to XBMC to copy and activate
     if xbmcvfs.exists(__temp__):
         shutil.rmtree(__temp__)
     xbmcvfs.mkdirs(__temp__)
-
+    log('service.download', f'created temp {__temp__}')
     filename = os.path.join(__temp__, filename + ".zip")
+    log('sevice.download', f'sub filename {filename}')
     req = urllib2.Request(url, headers={"User-Agent": "Kodi-Addon"})
-    sub = urllib2.urlopen(req).read()
-    with open(filename, "wb") as subFile:
-        subFile.write(sub)
-    subFile.close()
+    with urllib2.urlopen(req) as response:
+        raw_sub = response.read()
+    with open(filename, "wb") as subfile:
+        subfile.write(raw_sub)
+    log('service.download', f'wrote file {filename}')
 
     xbmc.sleep(500)
-    xbmc.executebuiltin(
-        (
-            'XBMC.Extract("%s","%s")' % (filename, __temp__,)
-        ).encode('utf-8'), True)
-
-    for file in xbmcvfs.listdir(__temp__)[1]:
+    #xbmc.executebuiltin(
+    #   ('XBMC.Extract("%s","%s")' % (filename, __temp__,)),
+    #    True)
+    (zip_dirs, zip_files) = xbmcvfs.listdir(f'zip://{urllib.parse.quote_plus(filename)}')
+    log('service.download', f'zip files {zip_files} zip dirs {zip_dirs}')
+    for file in zip_files:
+        xbmcvfs.copy(f'zip://{urllib.parse.quote_plus(filename)}/{file}', f'{__temp__}/{file}')
         file = os.path.join(__temp__, file)
-        if os.path.splitext(file)[1] in exts:
-            if search_string and string.find(
-                string.lower(file),
-                string.lower(search_string)
+        log('service.download', f'file is {file}')
+        if os.path.splitext(file)[1] in EXTS:
+            if search_string and str.find(
+                str.lower(file),
+                str.lower(search_string)
             ) == -1:
                 continue
-            log(__name__, "=== returning subtitle file %s" % file)
+            log(__name__, f"=== returning subtitle file {file}")
             subtitle_list.append(file)
 
     return subtitle_list
 
 
-def normalizeString(str):
+def normalize_string(unistr:str) -> str:
+    """performs NFKD on unicode strings
+
+    Args:
+        unistr (str): a string to normalize
+
+    Returns:
+        str: ormalized string
+    """
     return unicodedata.normalize(
-        'NFKD', unicode(unicode(str, 'utf-8'))
-    ).encode('ascii', 'ignore')
+        'NFKD', unistr)
 
 
-def get_params():
+def get_params() -> dict:
+    """gets a dict of argv parameters passed to addon
+
+    Returns:
+        dict: the parameters split with & character
+    """
     param = {}
     paramstring = sys.argv[2]
+    log('service.get_params', f'type {type(paramstring)} len {len(paramstring)} {paramstring}')
     if len(paramstring) >= 2:
-        params = paramstring
-        cleanedparams = params.replace('?', '')
-        if (params[len(params) - 1] == '/'):
-            params = params[0:len(params) - 2]
+        cleanedparams = paramstring.replace('?', '')
+        if paramstring[len(paramstring) - 1] == '/':
+            paramstring = paramstring[0:len(paramstring) - 2]
         pairsofparams = cleanedparams.split('&')
+        log('service.get_params', f'pairsofparams {pairsofparams}')
         param = {}
-        for i in range(len(pairsofparams)):
-            splitparams = pairsofparams[i].split('=')
+        for pitem in pairsofparams:
+            splitparams = pitem.split('=')
             if (len(splitparams)) == 2:
                 param[splitparams[0]] = splitparams[1]
-
+    log('service.get_params', f'param dict {param}')
     return param
 
 
 params = get_params()
 
+#search argenteam for subs and provide list of subs for Kodi select dialog
 if params['action'] == 'search' or params['action'] == 'manualsearch':
     item = {}
     item['temp'] = False
@@ -297,30 +337,31 @@ if params['action'] == 'search' or params['action'] == 'manualsearch':
     item['year'] = xbmc.getInfoLabel("VideoPlayer.Year")
     item['season'] = str(xbmc.getInfoLabel("VideoPlayer.Season"))
     item['episode'] = str(xbmc.getInfoLabel("VideoPlayer.Episode"))
-    item['tvshow'] = normalizeString(
+    item['tvshow'] = normalize_string(
         xbmc.getInfoLabel("VideoPlayer.TVshowtitle")
     )
-    item['title'] = normalizeString(
+    item['title'] = normalize_string(
         xbmc.getInfoLabel("VideoPlayer.OriginalTitle")
     )
-    item['file_original_path'] = urllib.unquote(
-        xbmc.Player().getPlayingFile().decode('utf-8')
+    item['file_original_path'] = urllib.parse.unquote(
+        xbmc.Player().getPlayingFile()
     )
+    log('service', f'file_original_path {item["file_original_path"]}')
     item['3let_language'] = []
 
     if 'searchstring' in params:
         item['mansearch'] = True
         item['mansearchstr'] = params['searchstring']
-        print params['searchstring']
+        log('service', f"searchstring {params['searchstring']}")
 
-    for lang in urllib.unquote(params['languages']).decode('utf-8').split(","):
+    for lang in urllib.parse.unquote(params['languages']).split(","):
         item['3let_language'].append(
             xbmc.convertLanguage(lang, xbmc.ISO_639_2)
         )
 
     if item['title'] == "":
         # no original title, get just Title
-        item['title'] = normalizeString(xbmc.getInfoLabel("VideoPlayer.Title"))
+        item['title'] = normalize_string(xbmc.getInfoLabel("VideoPlayer.Title"))
 
     # Check if season is "Special"
     if item['episode'].lower().find("s") > -1:
@@ -342,11 +383,14 @@ if params['action'] == 'search' or params['action'] == 'manualsearch':
 
     search(item)
 
+#download sub file from user select dialog action
 elif params['action'] == 'download':
+    log('service', 'download subs')
     ## we pickup all our arguments sent from def Search()
     if 'find' in params:
-        subs = download(params["link"], params["find"])
+        subs = download(params["link"], params["find"], "")
     else:
+        log('service', 'download subs no find')
         subs = download(params["id"],params["link"], params["filename"])
     ## we can return more than one subtitle for multi CD versions,
     ## for now we are still working out how to handle that
