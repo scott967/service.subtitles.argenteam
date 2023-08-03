@@ -45,9 +45,9 @@ __temp__ = __temp__ + os.path.sep
 sys.path.append(__resource__)
 API_SEARCH_URL = "http://argenteam.net/api/v1/search"
 API_TVSHOW_API = "http://argenteam.net/api/v1/tvshow"
-api_episode_url = "http://argenteam.net/api/v1/episode"
+API_EPISODE_URL = "http://argenteam.net/api/v1/episode"
 API_MOVIE_API = "http://argenteam.net/api/v1/movie"
-main_url = "http://www.argenteam.net/"
+MAIN_URL = "http://www.argenteam.net/"
 EXTS = [".srt", ".sub", ".txt", ".smi", ".ssa", ".ass"]
 
 
@@ -81,7 +81,7 @@ def append_subtitle(items:list):
                f"&link={item['link']}"
                f"&filename={item['filename']}"
                f"&id={item['id']}")
-        log('service.append_subtitle', f"listitem url: {url}")
+        #log('service.append_subtitle', f"listitem url: {url}")
 
         ## add it to list, this can be done as many times as needed
         ## for all subtitles found
@@ -93,7 +93,7 @@ def append_subtitle(items:list):
         )
 
 
-def search_movie(movie_id:int):
+def search_movie(movie_id:int) -> list:
     url = API_MOVIE_API + "?id=" + str(movie_id)
     content, response_url = geturl(url)
     return search_common(content)
@@ -120,8 +120,8 @@ def search_tvshow(result):
     return subs
 
 
-def search_episode(episode_id):
-    url = api_episode_url + "?id=" + str(episode_id)
+def search_episode(episode_id) -> list:
+    url = API_EPISODE_URL + "?id=" + str(episode_id)
     content, response_url = geturl(url)
 
     return search_common(content)
@@ -158,9 +158,15 @@ def search_common(content) -> list:
         return items
 
 
-def search_filename(filename, languages):
+def search_filename(filename:str, language:list):
+    """gets title and year from filename
+
+    Args:
+        filename (str): A filename to parse
+        languages (list): unused
+    """
     title, year = xbmc.getCleanMovieTitle(filename)
-    log(__name__, "clean title: \"%s\" (%s)" % (title, year))
+    log(__name__, f'clean title: \"{title}\" ({year})')
     try:
         yearval = int(year)
     except ValueError:
@@ -257,9 +263,9 @@ def download(id:str, url:str, filename:str, search_string="") -> list:
     if xbmcvfs.exists(__temp__):
         shutil.rmtree(__temp__)
     xbmcvfs.mkdirs(__temp__)
-    log('service.download', f'created temp {__temp__}')
+    #log('service.download', f'created temp {__temp__}')
     filename = os.path.join(__temp__, filename + ".zip")
-    log('sevice.download', f'sub filename {filename}')
+    #log('sevice.download', f'sub filename {filename}')
     req = urllib2.Request(url, headers={"User-Agent": "Kodi-Addon"})
     with urllib2.urlopen(req) as response:
         raw_sub = response.read()
@@ -271,12 +277,12 @@ def download(id:str, url:str, filename:str, search_string="") -> list:
     #xbmc.executebuiltin(
     #   ('XBMC.Extract("%s","%s")' % (filename, __temp__,)),
     #    True)
-    (zip_dirs, zip_files) = xbmcvfs.listdir(f'zip://{urllib.parse.quote_plus(filename)}')
-    log('service.download', f'zip files {zip_files} zip dirs {zip_dirs}')
+    zip_files = xbmcvfs.listdir(f'zip://{urllib.parse.quote_plus(filename)}')[1]
+    #log('service.download', f'zip files {zip_files} zip dirs {zip_dirs}')
     for file in zip_files:
         xbmcvfs.copy(f'zip://{urllib.parse.quote_plus(filename)}/{file}', f'{__temp__}/{file}')
         file = os.path.join(__temp__, file)
-        log('service.download', f'file is {file}')
+        #log('service.download', f'file is {file}')
         if os.path.splitext(file)[1] in EXTS:
             if search_string and str.find(
                 str.lower(file),
@@ -310,13 +316,13 @@ def get_params() -> dict:
     """
     param = {}
     paramstring = sys.argv[2]
-    log('service.get_params', f'type {type(paramstring)} len {len(paramstring)} {paramstring}')
+    #log('service.get_params', f'type {type(paramstring)} len {len(paramstring)} {paramstring}')
     if len(paramstring) >= 2:
         cleanedparams = paramstring.replace('?', '')
         if paramstring[len(paramstring) - 1] == '/':
             paramstring = paramstring[0:len(paramstring) - 2]
         pairsofparams = cleanedparams.split('&')
-        log('service.get_params', f'pairsofparams {pairsofparams}')
+        #log('service.get_params', f'pairsofparams {pairsofparams}')
         param = {}
         for pitem in pairsofparams:
             splitparams = pitem.split('=')
@@ -346,13 +352,13 @@ if params['action'] == 'search' or params['action'] == 'manualsearch':
     item['file_original_path'] = urllib.parse.unquote(
         xbmc.Player().getPlayingFile()
     )
-    log('service', f'file_original_path {item["file_original_path"]}')
+    #log('service', f'file_original_path {item["file_original_path"]}')
     item['3let_language'] = []
 
     if 'searchstring' in params:
         item['mansearch'] = True
         item['mansearchstr'] = params['searchstring']
-        log('service', f"searchstring {params['searchstring']}")
+        #log('service', f"searchstring {params['searchstring']}")
 
     for lang in urllib.parse.unquote(params['languages']).split(","):
         item['3let_language'].append(
@@ -390,7 +396,6 @@ elif params['action'] == 'download':
     if 'find' in params:
         subs = download(params["link"], params["find"], "")
     else:
-        log('service', 'download subs no find')
         subs = download(params["id"],params["link"], params["filename"])
     ## we can return more than one subtitle for multi CD versions,
     ## for now we are still working out how to handle that
